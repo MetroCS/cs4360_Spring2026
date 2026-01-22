@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>CS 4360 Project Whiteboard</title>
+    <title>Project Whiteboard</title>
     <style>
         * {
             margin: 0;
@@ -282,18 +282,41 @@
             font-size: 0.85em;
             color: #718096;
         }
+
+        .loading-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(102, 126, 234, 0.9);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            z-index: 2000;
+            color: white;
+            font-size: 1.5em;
+        }
+
+        .loading-overlay.hidden {
+            display: none;
+        }
     </style>
 </head>
 <body>
+    <div class="loading-overlay" id="loadingOverlay">
+        <div>Loading...</div>
+    </div>
+
     <div class="header">
-        <h1>CS 4360 Project Whiteboard</h1>
+        <h1>🎨 Project Whiteboard</h1>
         <p>Share your ideas and choose projects to collaborate on</p>
     </div>
 
     <div class="user-info">
         <div>
             <span class="user-name" id="userName">Loading...</span>
-            <span class="sync-indicator" id="syncIndicator">● Syncing...</span>
+            <span class="sync-indicator" id="syncIndicator">● Connected</span>
         </div>
         <div>
             <button onclick="changeUser()" class="btn-secondary">Change Name</button>
@@ -379,31 +402,80 @@
         </div>
     </div>
 
+    <!-- Firebase SDK -->
+    <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-database-compat.js"></script>
+
     <script>
-        const MODZ = 'admin321';
-        const SYNC_INTERVAL = 5000; // 5 seconds
+        // ============================================
+        // FIREBASE CONFIGURATION
+        // ============================================
+        // 
+const firebaseConfig = {
+  apiKey: "AIzaSyAsxwf32FRMbzCXd816nOl-Ff-oxSfLpDo",
+  authDomain: "student-whiteboard.firebaseapp.com",
+  databaseURL: "https://student-whiteboard-default-rtdb.firebaseio.com",
+  projectId: "student-whiteboard",
+  storageBucket: "student-whiteboard.firebasestorage.app",
+  messagingSenderId: "1003933213460",
+  appId: "1:1003933213460:web:d21c8fff3611f856f01801"
+};
+
+        // Moderator password - change this to your preferred password
+        const MODERATOR_PASSWORD = 'admin321';
+
+        // ============================================
+        // APPLICATION CODE
+        // ============================================
         let currentUser = '';
         let currentProjectId = null;
-        let syncTimer = null;
+        let database = null;
+        let projectsRef = null;
+
+        // Initialize Firebase
+        function initFirebase() {
+            try {
+                firebase.initializeApp(firebaseConfig);
+                database = firebase.database();
+                projectsRef = database.ref('projects');
+                
+                // Listen for real-time updates
+                projectsRef.on('value', (snapshot) => {
+                    const projectsData = snapshot.val();
+                    const projects = projectsData ? Object.values(projectsData) : [];
+                    renderProjects(projects);
+                    updateSyncIndicator(true);
+                });
+
+                return true;
+            } catch (error) {
+                console.error('Firebase initialization error:', error);
+                alert('Error connecting to database. Please check your Firebase configuration.');
+                return false;
+            }
+        }
 
         // Initialize app
-        async function init() {
-            try {
-                const storedUser = await window.storage.get('currentUser');
-                if (storedUser && storedUser.value) {
-                    currentUser = storedUser.value;
-                    document.getElementById('userName').textContent = `Logged in as: ${currentUser}`;
-                    loadProjects();
-                    startSync();
-                } else {
-                    showModal('userNameModal');
-                }
-            } catch (error) {
+        function init() {
+            const initialized = initFirebase();
+            if (!initialized) {
+                document.getElementById('loadingOverlay').classList.remove('hidden');
+                document.getElementById('loadingOverlay').innerHTML = '<div>Error: Please configure Firebase settings in the code</div>';
+                return;
+            }
+
+            const storedUser = localStorage.getItem('currentUser');
+            if (storedUser) {
+                currentUser = storedUser;
+                document.getElementById('userName').textContent = `Logged in as: ${currentUser}`;
+                document.getElementById('loadingOverlay').classList.add('hidden');
+            } else {
+                document.getElementById('loadingOverlay').classList.add('hidden');
                 showModal('userNameModal');
             }
         }
 
-        async function setUserName() {
+        function setUserName() {
             const nameInput = document.getElementById('userNameInput');
             const name = nameInput.value.trim();
             if (!name) {
@@ -411,57 +483,19 @@
                 return;
             }
             currentUser = name;
-            await window.storage.set('currentUser', name);
+            localStorage.setItem('currentUser', name);
             document.getElementById('userName').textContent = `Logged in as: ${currentUser}`;
             closeModal('userNameModal');
-            loadProjects();
-            startSync();
         }
 
-        async function changeUser() {
+        function changeUser() {
             document.getElementById('userNameInput').value = currentUser;
             showModal('userNameModal');
         }
 
-        function startSync() {
-            if (syncTimer) clearInterval(syncTimer);
-            syncTimer = setInterval(() => {
-                loadProjects();
-                updateSyncIndicator();
-            }, SYNC_INTERVAL);
-        }
-
-        function updateSyncIndicator() {
+        function updateSyncIndicator(connected) {
             const indicator = document.getElementById('syncIndicator');
-            indicator.textContent = '● Synced';
-            setTimeout(() => {
-                indicator.textContent = '○ Syncing...';
-            }, 1000);
-        }
-
-        async function loadProjects() {
-            try {
-                const result = await window.storage.list('project:', true);
-                const projects = [];
-                
-                if (result && result.keys) {
-                    for (const key of result.keys) {
-                        try {
-                            const projectData = await window.storage.get(key, true);
-                            if (projectData && projectData.value) {
-                                projects.push(JSON.parse(projectData.value));
-                            }
-                        } catch (error) {
-                            console.error('Error loading project:', error);
-                        }
-                    }
-                }
-
-                renderProjects(projects);
-            } catch (error) {
-                console.error('Error loading projects:', error);
-                renderProjects([]);
-            }
+            indicator.textContent = connected ? '● Connected' : '○ Disconnected';
         }
 
         function renderProjects(projects) {
@@ -477,6 +511,9 @@
                 return;
             }
 
+            // Sort projects by creation date (newest first)
+            projects.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+
             board.innerHTML = projects.map(project => `
                 <div class="project-card">
                     <div class="project-title">${escapeHtml(project.title)}</div>
@@ -486,13 +523,13 @@
                         <strong>What:</strong> ${escapeHtml(project.what)}
                     </div>
                     <div class="project-actions">
-                        ${project.choosers.includes(currentUser) 
+                        ${project.choosers && project.choosers.includes(currentUser) 
                             ? `<button onclick="removeChoice('${project.id}')" class="btn-danger">Remove My Choice</button>`
                             : `<button onclick="chooseProject('${project.id}')" class="btn-primary">Choose This Project</button>`
                         }
                         <button onclick="showCommentModal('${project.id}')" class="btn-secondary">Add Comment</button>
                     </div>
-                    ${project.choosers.length > 0 ? `
+                    ${project.choosers && project.choosers.length > 0 ? `
                         <div class="choosers">
                             <div class="choosers-title">Students who chose this (${project.choosers.length}):</div>
                             <div class="chooser-list">
@@ -500,7 +537,7 @@
                             </div>
                         </div>
                     ` : ''}
-                    ${project.comments.length > 0 ? `
+                    ${project.comments && project.comments.length > 0 ? `
                         <div class="comments-section">
                             <div class="comments-title">Comments & Contributions:</div>
                             ${project.comments.map(comment => `
@@ -525,8 +562,9 @@
                 return;
             }
 
+            const projectId = 'project_' + Date.now();
             const project = {
-                id: 'project:' + Date.now(),
+                id: projectId,
                 title,
                 who,
                 what,
@@ -537,12 +575,11 @@
             };
 
             try {
-                await window.storage.set(project.id, JSON.stringify(project), true);
+                await projectsRef.child(projectId).set(project);
                 closeModal('addProjectModal');
                 document.getElementById('projectTitle').value = '';
                 document.getElementById('projectWho').value = '';
                 document.getElementById('projectWhat').value = '';
-                loadProjects();
             } catch (error) {
                 alert('Error adding project: ' + error.message);
             }
@@ -550,13 +587,13 @@
 
         async function chooseProject(projectId) {
             try {
-                const projectData = await window.storage.get(projectId, true);
-                if (projectData && projectData.value) {
-                    const project = JSON.parse(projectData.value);
-                    if (!project.choosers.includes(currentUser)) {
-                        project.choosers.push(currentUser);
-                        await window.storage.set(projectId, JSON.stringify(project), true);
-                        loadProjects();
+                const snapshot = await projectsRef.child(projectId).once('value');
+                const project = snapshot.val();
+                if (project) {
+                    const choosers = project.choosers || [];
+                    if (!choosers.includes(currentUser)) {
+                        choosers.push(currentUser);
+                        await projectsRef.child(projectId).child('choosers').set(choosers);
                     }
                 }
             } catch (error) {
@@ -566,12 +603,11 @@
 
         async function removeChoice(projectId) {
             try {
-                const projectData = await window.storage.get(projectId, true);
-                if (projectData && projectData.value) {
-                    const project = JSON.parse(projectData.value);
-                    project.choosers = project.choosers.filter(name => name !== currentUser);
-                    await window.storage.set(projectId, JSON.stringify(project), true);
-                    loadProjects();
+                const snapshot = await projectsRef.child(projectId).once('value');
+                const project = snapshot.val();
+                if (project) {
+                    const choosers = (project.choosers || []).filter(name => name !== currentUser);
+                    await projectsRef.child(projectId).child('choosers').set(choosers);
                 }
             } catch (error) {
                 alert('Error removing choice: ' + error.message);
@@ -591,18 +627,18 @@
             }
 
             try {
-                const projectData = await window.storage.get(currentProjectId, true);
-                if (projectData && projectData.value) {
-                    const project = JSON.parse(projectData.value);
-                    project.comments.push({
+                const snapshot = await projectsRef.child(currentProjectId).once('value');
+                const project = snapshot.val();
+                if (project) {
+                    const comments = project.comments || [];
+                    comments.push({
                         author: currentUser,
                         text,
                         createdAt: new Date().toISOString()
                     });
-                    await window.storage.set(currentProjectId, JSON.stringify(project), true);
+                    await projectsRef.child(currentProjectId).child('comments').set(comments);
                     closeModal('addCommentModal');
                     document.getElementById('commentText').value = '';
-                    loadProjects();
                 }
             } catch (error) {
                 alert('Error adding comment: ' + error.message);
@@ -614,8 +650,8 @@
         }
 
         async function clearBoard() {
-            const check = document.getElementById('modPassword').value;
-            if (check !== MODZ) {
+            const password = document.getElementById('modPassword').value;
+            if (password !== MODERATOR_PASSWORD) {
                 alert('Incorrect password');
                 return;
             }
@@ -625,15 +661,9 @@
             }
 
             try {
-                const result = await window.storage.list('project:', true);
-                if (result && result.keys) {
-                    for (const key of result.keys) {
-                        await window.storage.delete(key, true);
-                    }
-                }
+                await projectsRef.remove();
                 closeModal('moderatorModal');
                 document.getElementById('modPassword').value = '';
-                loadProjects();
             } catch (error) {
                 alert('Error clearing board: ' + error.message);
             }
@@ -658,7 +688,7 @@
         }
 
         // Initialize on load
-        init();
+        window.addEventListener('load', init);
     </script>
 </body>
 </html>
